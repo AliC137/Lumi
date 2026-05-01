@@ -1,0 +1,79 @@
+tmp/
+.env
+s3.env
+.classpath
+.project
+.settings/
+target/
+*.iml
+.idea/*
+.idea/
+**/.idea/
+bin/
+gen/
+docs/build/
+docs/build/*
+env/
+env/*
+src/PauLie.egg-info/
+src/PauLie.egg-info/*
+.venv/
+.venv/*
++ venv/
++ venv/*
+examples/data
+examples/data/*
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+debugging/
+debugging/*
+
+# Mac OS X
+*.DS_Store
+
+# Xcode
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xcuserstate
+project.xcworkspace/
+xcuserdata/
+
+# Generated files
+*.o
+*.pyc
+*.6
+6.out
+*.class
+*.apk
+*.dex
+*.ap_
+*.out
+*.cmd
+
+#Python modules
+MANIFEST
+dist/
+iOS/**/build/
+
+# Backup files
+*~.nib
+\#*#
+.#*
+
+# ajcore
+ajcore.*
+
+aimodels/
+aimodels/*
+aimodels/*/*
+
+tmp/
+tmp/*
+tmp/*/*
+
+samples/
+samples/*
+samples/*/*
