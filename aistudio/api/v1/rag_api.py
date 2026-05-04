@@ -1,10 +1,15 @@
 import requests
 import uuid
-from fastapi import Query, UploadFile, APIRouter, FastAPI, Depends
+from fastapi import Query, UploadFile, APIRouter, FastAPI, Depends, HTTPException
 from fastapi import Request, WebSocket
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from aistudio.langchain_loaders.rag_singleton import rag_service
+from aistudio.langchain_loaders.rag_service import (
+    normalize_reply_language,
+    reply_language_instruction,
+    strip_model_reasoning,
+)
 from aistudio.services.llms.llm_dialog_service import LLMDialogService
 from aistudio.services.llms.library_service import LibraryService
 
@@ -27,30 +32,68 @@ app = FastAPI()
 llm = OllamaLLM(model="deepseek-r1")
 
 
-async def run_rag_query(question: str) -> dict:
-    """Shared RAG + LLM fallback logic (used by ``/api/v1/rag/query`` in ``rag_upload``)."""
+async def run_rag_query(
+    question_for_llm: str,
+    reply_language: str = "auto",
+    retrieval_query: str | None = None,
+) -> dict:
+    """Shared RAG + LLM fallback (retrieval uses retrieval_query when set — avoids noisy chat-prefix embeddings)."""
+    rl = normalize_reply_language(reply_language)
+    rq = (retrieval_query or "").strip() or None
     try:
-        answer = rag_service.query(question)
+        answer = rag_service.query(
+            question_for_llm,
+            reply_language=rl,
+            retrieval_query=rq,
+        )
         if answer and "No documents uploaded yet." not in answer:
             return {"answer": answer}
     except Exception as e:
         print(f"[RAG error] {e}")
 
+    if rag_service.vectorstore is not None:
+        blocked = {
+            "ru": (
+                "Не удалось составить ответ строго по загруженным фрагментам. "
+                "Переформулируйте вопрос, укажите номер главы и ключевые слова из PDF, "
+                "или дождитесь окончания индексации после загрузки."
+            ),
+            "tg": (
+                "Ҷавоб аз матни боргирифташуда наёфт шуд. Саволро иваз кунед ё матни дақиқ аз PDF нависед."
+            ),
+            "en": (
+                "Could not answer strictly from your uploaded excerpts. "
+                "Rephrase the question, name the chapter and keywords from the PDF, "
+                "or wait until indexing finishes after upload."
+            ),
+            "auto": (
+                "Could not answer strictly from your uploaded excerpts. "
+                "Rephrase the question, name the chapter and keywords from the PDF, "
+                "or wait until indexing finishes after upload."
+            ),
+        }
+        return {"answer": blocked.get(rl, blocked["auto"])}
+
     try:
-        fallback = llm.invoke(
-            "Answer in the same language as the user's question. "
-            "If the question is in English, answer in English only.\n\n"
-            f"Question: {question}"
+        instr = reply_language_instruction(rl)
+        prompt = (
+            f"{instr}\n\n"
+            "Answer directly with no reasoning preamble (no Hmm, no step-by-step planning).\n\n"
+            f"Question:\n{question_for_llm}\n\nAnswer:"
         )
-        return {"answer": fallback}
+        raw = rag_service.get_llm().invoke(prompt)
+        text = raw.content if hasattr(raw, "content") else str(raw)
+        return {"answer": strip_model_reasoning(text)}
     except Exception as e:
         return {"error": f"LLM fallback failed: {str(e)}"}
 
 
-@router.post("/api/v1/stt/tajik/")
+@router.post("/stt/tajik/")
 async def transcribe_tajik(file: UploadFile, db: Session = Depends(get_db)):
     transcribe_service = TranscribeService(config, 'tg', db=db)
     obj = transcribe_service.transcribe(file)
+    if isinstance(obj, dict) and obj.get("error"):
+        raise HTTPException(status_code=500, detail=str(obj["error"]))
     return obj
 
 

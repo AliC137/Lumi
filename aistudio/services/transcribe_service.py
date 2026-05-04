@@ -18,7 +18,10 @@ class TranscribeService:
         """
         Конструктор
         """
-        if language == 'auto':
+        # Tajik STT: use Vosk ``vosk-model-tg-*``. Yandex ``language=auto`` mis-detects tg as uz/ru.
+        if language == 'tg':
+            self.transcribers = [VoskTranscriber()]
+        elif language == 'auto':
             self.transcribers = [VoskTranscriber(), YandexTranscriber(config)]
         elif language not in ["ru", "en"]:
             self.transcribers = [YandexTranscriber(config)]

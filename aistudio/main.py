@@ -9,6 +9,10 @@ main.py
 Главная точка входа в приложение.
 Инициализирует FastAPI-приложение и подключает маршруты (контроллеры).
 """
+from aistudio.utils.ffmpeg_path import ensure_local_ffmpeg_on_path
+
+ensure_local_ffmpeg_on_path()
+
 import json
 import os
 from pathlib import Path

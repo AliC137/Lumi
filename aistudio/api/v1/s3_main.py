@@ -1,30 +1,18 @@
-from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse
-from pathlib import Path
-from aistudio.repositories.fastapi_s3 import S3
-from aistudio.config.config import S3Config
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import StreamingResponse
-import boto3
 from io import BytesIO
+from urllib.parse import quote
+import boto3
 import os
-from urllib.parse import quote
-from fastapi.responses import StreamingResponse
-from urllib.parse import quote
-
-
 
 
 router = APIRouter()
 
-s3_config = S3Config()
-
-s3_client = S3(s3_config)
-
+# Legacy known-working S3 setup
 s3_client = boto3.client(
     "s3",
-    endpoint_url=os.getenv("AWS_S3_ENDPOINT"),
+    endpoint_url="https://storage.yandexcloud.net",
     aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
 )
@@ -35,10 +23,10 @@ s3_client = boto3.client(
 
 
 
-
 @router.get("/download_file")
 async def download_file(filename: str = Query(..., description="Filename only")):
-    bucket_name = os.getenv("AWS_BUCKET_NAME")
+    """Must use the same bucket and prefix as ``rag_upload`` (``s3-uploader/``)."""
+    bucket_name = "aistudio"
     object_name = f"s3-uploader/{filename}"
 
     try:
@@ -46,21 +34,22 @@ async def download_file(filename: str = Query(..., description="Filename only"))
         s3_client.download_fileobj(bucket_name, object_name, file_buffer)
         file_buffer.seek(0)
 
-        # Кодируем имя файла для заголовка
         quoted_filename = quote(filename)
 
         return StreamingResponse(
             file_buffer,
             media_type="application/octet-stream",
             headers={
-                # для браузеров, которые понимают UTF-8
                 "Content-Disposition": f"attachment; filename*=UTF-8''{quoted_filename}"
-            }
+            },
         )
-    except s3_client.exceptions.NoSuchKey:
-        raise HTTPException(status_code=404, detail="File not found in S3")
+    except ClientError as e:
+        code = (e.response or {}).get("Error", {}).get("Code", "") or ""
+        if code in ("404", "NoSuchKey", "NotFound") or "404" in str(e):
+            raise HTTPException(status_code=404, detail="File not found in S3") from e
+        raise HTTPException(status_code=500, detail=f"Error downloading file: {str(e)}") from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error downloading file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error downloading file: {str(e)}") from e
 
 
 

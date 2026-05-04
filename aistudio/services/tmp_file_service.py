@@ -15,7 +15,10 @@ class TmpFileService:
         """
         self.file = file
         self.file_uuid = str(uuid.uuid4())
-        self.file_path = f'tmp/{self.file_uuid}.wav'
+        # Preserve upload extension — browser often sends WebM/OGG as "wav" filename would break decoding.
+        raw_name = file.filename or "audio.wav"
+        suffix = Path(raw_name).suffix or ".wav"
+        self.file_path = f"tmp/{self.file_uuid}{suffix}"
         self.path_file = Path(self.file_path)
         self._save()
 
@@ -30,6 +33,7 @@ class TmpFileService:
         Сохранить файл во временной папке
         """
         try:
+            self.path_file.parent.mkdir(parents=True, exist_ok=True)
             with self.path_file.open("wb") as buffer:
                 shutil.copyfileobj(self.file.file, buffer)
         finally:

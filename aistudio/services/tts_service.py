@@ -71,7 +71,10 @@ class TTSService:
 
     def clear_text(self, text: str) -> str:
         # Convert common markdown formatting to plain text for TTS.
-        cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+        cleaned = re.sub(r"<think>[\s\S]*?</think>", " ", text, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\\think\s*\{[\s\S]*?\}", " ", cleaned)
+        cleaned = re.sub(r"\\think\b.*", " ", cleaned)
+        cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cleaned)
         cleaned = re.sub(r"[*_~`#>-]", " ", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         return cleaned

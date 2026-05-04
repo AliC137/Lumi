@@ -1,19 +1,47 @@
-from fastapi import APIRouter, UploadFile, File, Query
+from fastapi import APIRouter, UploadFile, File, Query, BackgroundTasks, Body
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from aistudio.langchain_loaders.s3_loader import S3DocumentLoader
 from aistudio.langchain_loaders.rag_singleton import rag_service
 from aistudio.api.v1.rag_api import run_rag_query
-from typing import List
-import boto3
-import os
+from typing import List, Sequence, Optional
 from fastapi import HTTPException
 from urllib.parse import quote
+import boto3
+
+
+class RagQueryBody(BaseModel):
+    question: str = Field(..., description="Full user-facing prompt (may include chat context)")
+    retrieval_query: Optional[str] = Field(
+        None,
+        description="Short text for vector search only; omit to use `question` for both",
+    )
+    reply_language: str = "auto"
 
 router = APIRouter(tags=["RAG"])
 
-# S3 configuration
+# Legacy known-working S3 setup
 s3 = boto3.client("s3", endpoint_url="https://storage.yandexcloud.net")
 BUCKET_NAME = "aistudio"
+
+
+def _ingest_s3_keys(keys: Sequence[str]) -> None:
+    """Load keys from S3 and merge into the RAG index so earlier uploads in the session stay searchable."""
+    rag_service.begin_ingest()
+    try:
+        loader = S3DocumentLoader(bucket_name=BUCKET_NAME, s3_client=s3)
+        documents = []
+        for key in keys:
+            try:
+                for doc in loader.load(key):
+                    doc.metadata.setdefault("source_file", key.rsplit("/", 1)[-1])
+                    documents.append(doc)
+            except Exception as e:
+                print(f"[RAG ingest failed] {key}: {e}")
+        if documents:
+            rag_service.add_documents(documents, replace=False)
+    finally:
+        rag_service.end_ingest()
 
 
 def rag_index_json() -> dict:
@@ -33,19 +61,21 @@ def rag_index_json() -> dict:
 
 
 
-async def _upload_files_impl(files: List[UploadFile]):
+async def _upload_files_impl(files: List[UploadFile], background_tasks: BackgroundTasks):
     results = []
+    keys: List[str] = []
     try:
-        loader = S3DocumentLoader(bucket_name=BUCKET_NAME, s3_client=s3)
-
         for file in files:
             key = f"s3-uploader/{file.filename}"
             s3.upload_fileobj(file.file, BUCKET_NAME, key)
+            keys.append(key)
 
-            documents = loader.load(key)
-            rag_service.add_documents(documents)
+            results.append(
+                {"filename": file.filename, "status": "✅ Uploaded; indexing in background"}
+            )
 
-            results.append({"filename": file.filename, "status": "✅ Uploaded & processed"})
+        if keys:
+            background_tasks.add_task(_ingest_s3_keys, keys)
 
         return {"status": "success", "files": results}
 
@@ -61,21 +91,47 @@ async def _upload_files_impl(files: List[UploadFile]):
     summary="Upload files (legacy path)",
     openapi_extra={"x-codegen-request-body-name": "files"},
 )
-async def upload_files(files: List[UploadFile] = File(...)):
+async def upload_files(
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile] = File(...),
+):
     """Original path (kept for frontend compatibility)."""
-    return await _upload_files_impl(files)
+    return await _upload_files_impl(files, background_tasks)
 
 
 @router.post("/upload_file", summary="Upload files (multipart field: files)")
-async def upload_file(files: List[UploadFile] = File(...)):
+async def upload_file(
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile] = File(...),
+):
     """Snake_case alias — same behaviour as ``upload-file``."""
-    return await _upload_files_impl(files)
+    return await _upload_files_impl(files, background_tasks)
 
 
-@router.post("/query", summary="RAG query (query param: question)")
-async def query(question: str = Query(..., description="Question for RAG / LLM fallback")):
-    """RAG query under the same ``/api/v1/rag`` prefix as upload and list."""
-    return await run_rag_query(question)
+@router.post("/query", summary="RAG query (JSON body preferred)")
+async def query(
+    question: Optional[str] = Query(None, description="Legacy: question as query param"),
+    reply_language: Optional[str] = Query(
+        None,
+        description="Answer language (en/ru/tg/auto). Sent from UI; overrides JSON body when provided.",
+    ),
+    body: Optional[RagQueryBody] = Body(None),
+):
+    """Use JSON ``{question, retrieval_query?, reply_language?}`` so search text stays short while the LLM may see chat context."""
+    if body is not None:
+        rl = reply_language if reply_language is not None else body.reply_language
+        return await run_rag_query(
+            body.question,
+            reply_language=rl,
+            retrieval_query=body.retrieval_query,
+        )
+    if question is not None:
+        rl_legacy = reply_language if reply_language is not None else "auto"
+        return await run_rag_query(question, reply_language=rl_legacy, retrieval_query=None)
+    raise HTTPException(
+        status_code=422,
+        detail="Send JSON body with `question`, or pass legacy query parameter `question`.",
+    )
 
 
 @router.get("/list_files", summary="List uploaded files in S3 prefix s3-uploader/")

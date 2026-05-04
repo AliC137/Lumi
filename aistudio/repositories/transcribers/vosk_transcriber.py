@@ -83,11 +83,10 @@ class VoskTranscriber:
         return output_filepath
     def _mono(self, input_filepath):
         out_file_path = f'tmp/{uuid.uuid4()}.wav'
-        output_filepath = Path(out_file_path)
-        sound = AudioSegment.from_wav(input_filepath)
-        sound = sound.set_channels(1)
+        sound = AudioSegment.from_file(str(input_filepath))
+        sound = sound.set_channels(1).set_frame_rate(16000)
         sound.export(out_file_path, format="wav")
-        return output_filepath
+        return Path(out_file_path)
     def transcribe(self, path_file: Path) -> str:
         """
         Перевести файл в текст
