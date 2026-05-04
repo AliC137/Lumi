@@ -66,14 +66,14 @@ iOS/**/build/
 # ajcore
 ajcore.*
 
-aimodels/
+# Large/binary artifacts — placeholders stay tracked (see README.md)
+samples/*
+!samples/.gitkeep
+
 aimodels/*
-aimodels/*/*
+!aimodels/.gitkeep
+!aimodels/README.md
 
 tmp/
 tmp/*
 tmp/*/*
-
-samples/
-samples/*
-samples/*/*
